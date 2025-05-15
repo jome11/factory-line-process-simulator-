@@ -1,0 +1,146 @@
+## Python Soft Drink Factory Simulation: Code Explanation for Beginners
+
+**Goal:** To create a virtual soft drink factory on the computer to simulate its operation, track how orders move through different stages, identify waiting times (bottlenecks), measure machine busyness, and see how long it takes to produce a target number of bottles.
+
+**File:** `factory_simulation.py`
+
+### 1. Imports: Getting Our Tools
+
+At the very top, we have `import` statements. These tell Python to bring in pre-written code packages (libraries) that provide useful functionalities:
+
+*   `import simpy`: The core library for building this kind of discrete-event simulation. It manages a virtual clock and lets us model processes happening over time.
+*   `import random`: Used for introducing variability, like the time it takes for a machine to process an order, or when a new order arrives. This makes the simulation more realistic.
+*   `import time`: Used to measure the actual real-world time it takes for our Python program to run the entire simulation on the computer.
+*   `import numpy as np`: NumPy (Numerical Python) is a powerful library for working with numbers, especially arrays and lists. We use it here to easily calculate things like the average wait time from our collected data.
+*   `import matplotlib.pyplot as plt`: This library is for creating static, interactive, and animated visualizations in Python. We use it to draw the histogram (bar chart) of wait times.
+
+### 2. Simulation Parameters: Setting the Factory Rules
+
+This section defines the basic settings and rules for our virtual factory. We can change these values to see how the factory behaves under different conditions.
+
+*   `RANDOM_SEED = 42`: When using random numbers, setting a "seed" ensures that if we run the simulation multiple times with the exact same settings, the sequence of random events will be identical. This is very helpful for testing and debugging because it makes the simulation repeatable.
+*   `TARGET_BOTTLES_TO_PRODUCE = 0`: This variable will hold the total number of bottles the user wants the factory to produce. The program will ask the user for this value when it starts.
+*   `BOTTLES_PER_ORDER = 1000`: Defines how many bottles are produced in a single "order" or "batch." For example, if this is 1000, and the target is 5000 bottles, the factory will need to process 5 orders.
+*   `NUM_MIXING_STATIONS = 1`, `NUM_FILLING_LINES = 2`, etc.: These specify how many machines or stations are available at each stage of production (Mixing, Filling, Capping, Labeling, Packaging).
+*   `DRINK_ORDER_INTERARRIVAL_TIME_MEAN = 15`: This is the average time (in minutes) between the arrivals of new drink orders at the factory.
+*   `PROCESSING_TIME_MIXING_MEAN = 10`, `PROCESSING_TIME_MIXING_STD = 2`, etc.: For each production stage, these define:
+    *   `_MEAN`: The average time (in minutes) it takes to process one order/batch at that stage.
+    *   `_STD` (Standard Deviation): A measure of how much the actual processing time can vary from the mean. A higher STD means more variability.
+
+### 3. Data Collection: Keeping Records
+
+As the simulation runs, we need to keep track of various pieces of information. This section initializes empty lists and counters for this purpose.
+
+*   `order_arrival_times = []`: A list to store the simulation time at which each order arrived at the factory.
+*   `order_departure_times = []`: A list to store the simulation time at which each order was completed and left the factory.
+*   `wait_times_mixing = []`, `wait_times_filling = []`, etc.: Separate lists to store the duration each order had to wait in the queue before processing could begin at each specific stage.
+*   `orders_processed_mixing = 0`, `orders_processed_filling = 0`, etc.: Counters to keep track of how many orders have successfully completed processing at each stage.
+*   `orders_processed_packaging = 0`: Specifically counts orders that finished the final packaging stage.
+*   `total_bottles_produced_count = 0`: A counter for the cumulative number of bottles produced by all completed orders.
+*   `factory_instance = None`: A placeholder that will later store our main factory "object." This allows us to access information about the factory's resources (like queues) even after the simulation finishes.
+
+### 4. The `SoftDrinkFactory` Class: Blueprint for Our Factory
+
+A `class` in Python is like a blueprint for creating objects. An "object" is a self-contained unit that has its own data (attributes) and actions it can perform (methods). Here, `SoftDrinkFactory` is the blueprint for our virtual factory.
+
+*   `__init__(self, env)`: This is a special method called the "constructor." It's automatically run when we create a new `SoftDrinkFactory` object.
+    *   `self`: Represents the specific factory object being created.
+    *   `env`: This is the SimPy simulation environment, which manages the simulation clock and events. The factory object keeps a reference to `env`.
+    *   Inside `__init__`, we define the machines for each stage: `self.mixing_stations = simpy.Resource(env, capacity=NUM_MIXING_STATIONS)`. `simpy.Resource` creates a resource (like a machine or a group of identical machines) that orders need to use. The `capacity` argument specifies how many orders can use this type of resource simultaneously.
+
+*   **Process Methods** (`mix_ingredients`, `fill_bottles`, `cap_bottles`, `label_bottles`, `package_drinks`):
+    *   Each of these methods simulates the actual work done on an order at a specific stage.
+    *   `global orders_processed_mixing`: This line is needed if the function modifies a global variable (a variable defined outside the function).
+    *   `processing_time = random.normalvariate(...)`: Calculates a processing time for the current order, adding some randomness based on the mean and standard deviation defined in the parameters. `max(0.1, processing_time)` ensures the time is always positive.
+    *   `yield self.env.timeout(processing_time)`: This is a crucial SimPy command. It tells the simulation to pause the current activity (e.g., mixing for this order) for the calculated `processing_time`. During this simulated pause, the simulation clock advances, and other events or processes in the factory can occur.
+    *   After the timeout, the relevant counter (e.g., `orders_processed_mixing += 1`) is incremented.
+    *   The `package_drinks` method additionally increments `total_bottles_produced_count` by `BOTTLES_PER_ORDER` because that's when an order is complete and its bottles are counted.
+
+### 5. The `drink_order_lifecycle` Function: An Order's Journey
+
+This function is a SimPy "process" that defines the entire sequence of operations for a single drink order, from its arrival to its departure.
+
+*   `arrival_time = env.now`: `env.now` gives the current time on the simulation's virtual clock. This is recorded.
+*   **Requesting a Resource (e.g., Mixing Station)**:
+    *   `with factory.mixing_stations.request() as request_mix:`: This is how an order asks to use a machine from a resource pool (e.g., mixing stations).
+    *   `req_time_mix = env.now`: Records the exact time the request is made.
+    *   `yield request_mix`: This is where the order might **wait**. If all machines of the requested type are currently busy, this SimPy process for this specific order will pause here until a machine becomes available. If a machine is free, it proceeds immediately.
+*   **Seizing the Resource and Processing**:
+    *   `wait_start_mix = env.now`: Records the time when the order actually gets access to the machine (after any waiting).
+    *   `wait_times_mixing.append(wait_start_mix - req_time_mix)`: The wait time is calculated (time got machine - time requested machine) and stored.
+    *   `yield env.process(factory.mix_ingredients(order_name))`: This line tells SimPy to execute the actual processing method (e.g., `mix_ingredients`) for this order. Since `mix_ingredients` itself contains a `yield env.timeout`, this `drink_order_lifecycle` process will pause again while the mixing (or other stage) takes place.
+    *   A `print` statement confirms when the stage is finished for that order.
+*   This pattern of request, (potentially) wait, seize, process, and record is repeated for each stage: Mixing -> Filling -> Capping -> Labeling -> Packaging.
+*   `departure_time = env.now`: After packaging, the order is complete, and its departure time is recorded.
+
+### 6. The `order_source` Function: Generating New Orders
+
+This is another SimPy process responsible for creating new drink orders and introducing them into the factory.
+
+*   `global total_bottles_produced_count, TARGET_BOTTLES_TO_PRODUCE`: Indicates use of global variables.
+*   `while total_bottles_produced_count < TARGET_BOTTLES_TO_PRODUCE:`: The loop continues to generate orders as long as the total number of bottles produced is less than the target set by the user.
+*   `interarrival = random.expovariate(...)`: Calculates a random time until the next order arrives, based on the `DRINK_ORDER_INTERARRIVAL_TIME_MEAN`.
+*   `yield env.timeout(interarrival)`: The `order_source` process pauses for this calculated inter-arrival time, simulating the gap between order arrivals.
+*   `generated_order_name = f"Order-{order_id_num}"`: Creates a unique name for the new order.
+*   `env.process(drink_order_lifecycle(env, generated_order_name, factory))`: For each new order, a *new* `drink_order_lifecycle` process is started. SimPy handles running all these individual order processes concurrently (as if they are happening at the same time, interleaved).
+*   The loop stops once the bottle target is met or exceeded by the last completed order.
+
+### 7. The `plot_wait_time_histogram` Function: Visualizing Data
+
+This function uses the `matplotlib` library to create a histogram (a type of bar chart) showing the distribution of wait times for a specific stage (in our case, the Packaging Station).
+
+*   It takes the list of `wait_times`, the `stage_name` (for the title), and the total `sim_duration` as input.
+*   `plt.figure(...)`: Creates a new chart window.
+*   `plt.hist(wait_times, bins=20, ...)`: Generates the histogram. `bins=20` suggests dividing the wait times into 20 intervals or ranges. The height of each bar shows how many orders had a wait time falling into that specific range.
+*   `plt.title(...)`, `plt.xlabel(...)`, `plt.ylabel(...)`: Set the title and labels for the axes of the chart.
+*   `plt.grid(...)`: Adds a grid to the chart for easier reading.
+*   `plt.show()`: Displays the generated chart in a new window.
+
+### 8. The `run_simulation` Function: The Main Orchestrator
+
+This function sets up the entire simulation, runs it, and then gathers and prints all the results.
+
+*   **Initialization**: Resets all global data collection lists and counters to ensure a clean run each time.
+*   **SimPy Setup**:
+    *   `env = simpy.Environment()`: Creates the main SimPy simulation environment.
+    *   `factory_instance = SoftDrinkFactory(env)`: Creates an instance (an actual object) of our `SoftDrinkFactory` class, operating within the `env`. This `factory_instance` is stored globally so we can inspect its resources later.
+    *   `env.process(order_source(env, factory_instance))`: Tells SimPy to start the `order_source` process. This process will, in turn, start the individual `drink_order_lifecycle` processes.
+*   **Running the Simulation**:
+    *   `env.run()`: This is the command that actually starts the simulation. SimPy advances its internal clock and executes events (like order arrivals, machines finishing tasks) in the correct sequence until there are no more events scheduled. This happens when the `order_source` has stopped generating orders (because the bottle target is met) and all orders already in the system have completed their lifecycles.
+*   **Collecting Results**: After `env.run()` finishes, `actual_simulation_duration = env.now` captures the final simulation time.
+*   **Printing Statistics**: The rest of this function is dedicated to printing the collected data in a readable format:
+    *   Overall summary (target bottles, actual bottles, total simulation time).
+    *   Order/batch summary (arrivals, departures, number processed at each stage).
+    *   Average wait times for each stage (using `np.mean` from NumPy).
+    *   Average system cycle time (total time an order spends in the factory).
+    *   Estimated resource utilization (how busy each machine type was). This is an approximation.
+    *   Resource state at the end of the simulation: For each machine type, it prints how many orders were actively being processed (`resource.count`) and how many were waiting in the queue (`len(resource.queue)`) at the exact moment the simulation ended.
+*   **Plotting**: Calls `plot_wait_time_histogram(...)` to display the wait time chart for the Packaging Station.
+
+### 9. The `if __name__ == "__main__":` Block: Starting the Program
+
+This is a standard Python construct. The code inside this block will only execute when the `factory_simulation.py` file is run directly (not when it's imported as a module into another script).
+
+*   **User Input**: It contains a `while True` loop to repeatedly ask the user to `input()` the "total number of bottles to produce." It tries to convert this input to an integer (`int()`).
+    *   It includes error handling (`try...except ValueError`) in case the user types something that isn't a whole number.
+    *   It also checks if the number entered is positive.
+    *   The loop breaks once valid, positive input is received, and this value is stored in `TARGET_BOTTLES_TO_PRODUCE`.
+*   `start_real_time = time.time()`: Records the actual computer's clock time just before the simulation starts.
+*   `run_simulation()`: This is the call that kicks off the entire simulation process described above.
+*   `end_real_time = time.time()`: Records the computer's clock time after the simulation finishes.
+*   The final `print` statement shows how many seconds the simulation took to run in real-world time.
+
+### How It All Flows:
+
+1.  User runs the script.
+2.  Program asks for the target number of bottles.
+3.  `run_simulation` is called.
+4.  SimPy environment and Factory object are created.
+5.  `order_source` starts, begins generating `drink_order_lifecycle` processes based on inter-arrival times.
+6.  Each `drink_order_lifecycle` moves its order through factory stages, requesting resources, waiting if necessary, and undergoing processing (which involves simulated time delays).
+7.  Data on arrivals, departures, wait times, and processed counts are collected throughout.
+8.  `order_source` stops when the bottle target is met.
+9.  `env.run()` continues until all active orders are complete.
+10. `run_simulation` prints out all text-based statistics and then calls `plot_wait_time_histogram` to show the chart.
+
+This simulation uses an event-driven approach: SimPy manages a list of future events, and the simulation jumps from one event to the next, advancing its clock accordingly. The `yield` statements are key to how SimPy pauses and resumes processes to model concurrent activities and time delays. 
